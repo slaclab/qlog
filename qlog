@@ -1,0 +1,215 @@
+#!/bin/bash
+
+declare -A requested_fields
+args=('query' '{job="accelerator_logs"}')
+
+
+# Print the column headers for results in table format
+print_headers() {
+    printf "%-20s %-15s %-15s %-20s %-40s\n" "Timestamp" "Accelerator" "Origin" "Facility" "Text"
+    echo "==========================================================================================================="
+}
+
+# Take the output of a logcli command and format it for display as a table. Works for both
+# on-off queries and tailing logs
+format_as_table() {
+    while read -r line; do
+        timestamp=$(echo "$line" | awk -F'T| ' '{print $1 " " $2}' | cut -d- -f1,2,3 --output-delimiter='-')
+        if [[ "$line" =~ "accelerator_logs" ]]; then
+            json_part=$(echo "$line" | awk -F'{job="accelerator_logs"} ' '{print $2}' | tr -d '\000-\037')
+        else
+            json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
+        fi
+        read -r accelerator origin facility text <<< $(echo "$json_part" | jq -r '.accelerator, .origin, .facility, .text')
+        printf "%-20s %-15s %-15s %-20s %-40s\n" "$timestamp" "$accelerator" "$origin" "$facility" "$text"
+    done
+}
+
+# Users are allowed to specify relative dates when setting from and to, this function will translate
+# them into the format that logcli expects
+process_date() {
+    local input_date=$1
+    if [[ "$input_date" =~ -[0-9]+[dh]$ ]]; then
+        local value="${input_date%?}"
+        case "$input_date" in
+            *d)
+                echo $(date "+%Y-%m-%dT%H:%M:%S.%NZ" -d "$value day") ;;
+            *h)
+                echo $(date "+%Y-%m-%dT%H:%M:%S.%NZ" -d "$value hour") ;;
+        esac
+    else
+        # Use the provided date directly if it doesn't match the above pattern.
+        echo "$input_date"
+    fi
+}
+
+# Add a filter to the query based on user selected fields (e.g., --accelerator)
+add_field() {
+    local key=$1
+    local value=$2
+    requested_fields[$key]=$value
+}
+
+# Condense repeated log lines into a single line, with a short note stating how many lines
+# were compacted
+compact_logs() {
+    local prev_text=""
+    local prev_line=""
+    local count=1
+
+    while read -r line; do
+        json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
+        current_text=$(echo "$json_part" | jq -r '.text' 2>/dev/null)
+
+        if [[ "$current_text" == "$prev_text" ]]; then
+            ((count++))
+        else
+            if [[ $count -gt 1 ]]; then
+	        echo ""
+                echo "$prev_line"
+                echo "$count Like:"
+		echo ""
+                count=1
+            elif [ ! -z "$prev_line" ]; then
+                echo "$prev_line"
+            fi
+        fi
+
+        prev_text="$current_text"
+        prev_line="$line"
+    done
+
+    # For the last set of lines
+    if [[ $count -gt 1 ]]; then
+        echo "$count Like: $prev_line"
+    else
+        echo "$prev_line"
+    fi
+}
+
+# Apply filters specified by the user in their command before making the logcli call
+build_query() {
+    for key in "${!requested_fields[@]}"; do
+        args[1]="${args[1]} |= \"\\\"$key\\\": \\\"${requested_fields[$key]}\\\"\""
+    done
+}
+
+usage() {
+    echo "qlog is a wrapper script around Loki's logcli to facilitate message log queries at SLAC."
+    echo " "
+    echo "Usage: `basename $0` [OPTIONS]"
+    echo "    Default: Returns the most recent 30 log entries excluding change log, watcher, and put logs"
+    echo " "
+    echo "    Options:"
+    echo "    -h | --help: print this usage info and exit"
+    echo " "
+    echo "    -a | --accelerator: Specify accelerator to return results from"
+    echo "                        Currently supported: LCLS, FACET"
+    echo "    --origin: Specify the origin/host "
+    echo "    -u | --user: Specify the user "
+    echo "    --facility: Specify the facility to return results from"
+    echo "    -s | --severity: Specify the severity to return results from"
+    echo " "
+    echo "    -r | --regex: Return results the match the specified regular expression"
+    echo "    -e | --exclude: Return results that do NOT match the specified regular expression"
+    echo " "
+    echo "    --since=1h: Lookback period"
+    echo "    --from: The earliest date from which to return from"
+    echo "            Uses RFC3339Nano without timezone, or number of days or hours ago"
+    echo "            --from -10d --to -9d  # between 10 and 9 days ago"
+    echo "            --from -36h --to -24h # between 36 and 24 hours ago"
+    echo "            --from 2023-09-20T10:00:00Z --to 2023-09-21T10:00:00Z"
+    echo "    --to: The latest date from which to return results"
+    echo "          Uses RFC3339Nano without timezone, or number of days or hours ago"
+    echo " "
+    echo "    --changelog: Include results from change logs"
+    echo "    --putlog: Include results from put logging"
+    echo "    --watcher: Include results from the watcher"
+    echo " "
+    echo "    --limit=30 Number of lines of output to return"
+    echo "    --table: Print all returned results in a table format"
+    echo "    -t | --tail: Tail results to watch logs in real time"
+    echo " "
+    echo "Example Queries:"
+    echo " "
+    echo "    Get last 20 lines from FACET over the past 24 hours that include the string KLYS output as a table:"
+    echo "        qlog -a FACET -r KLYS --since 24h --limit 20 --table"
+    echo " "
+    echo "    Get 30 lines from any accelerator that include the word error and exclude the string buffer from yesterday:"
+    echo "        qlog -r \"(?i)error\" -e buffer --from -2d --to -1d --table"
+
+
+    exit 0
+}
+
+
+invert=false
+changelog=false
+watcher=false
+putlog=false
+table=false
+regex=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h | --help) usage; break; shift ;;
+        -i | --invert) invert=true; shift ;;
+        --changelog) changelog=true; shift ;;
+        --putlog) putlog=true; shift ;;
+        --watcher) watcher=true; shift ;;
+        --table) table=true; shift ;;
+        -a | --accelerator) add_field "accelerator" "$2"; shift 2 ;;
+        --origin) add_field "origin" "$2"; shift 2 ;;
+        -u | --user) add_field "user" "$2"; shift 2 ;;
+        --facility) add_field "facility" "$2"; shift 2 ;;
+        -s | --severity) add_field "severity" "$2"; shift 2 ;;
+        -r | --regex) args[1]="${args[1]} |~ \"$2\""; shift 2 ;;
+        -e | --exclude) args[1]="${args[1]} !~ \"$2\""; shift 2 ;;
+        --from)
+            processed_from=$(process_date "$2")
+            args+=("--from=$processed_from")
+            shift 2
+            ;;
+        --to)
+            processed_to=$(process_date "$2")
+            args+=("--to=$processed_to")
+            shift 2
+            ;;
+        -t|--tail) invert=true; args+=("$1"); shift ;;
+        -o|--output) invert=true; args+=("$1"); shift ;;
+        *) args+=("$1"); shift ;;  # Support logcli options as well
+    esac
+done
+
+build_query
+
+# Filter out results from change log, watcher, and put logs unless specifically
+# requested by the user
+if [[ $changelog == false ]]; then
+    args[1]="${args[1]} !~ \"([A-Z]{2,4}:[^ ]+ changed from)\""
+fi
+
+if [[ $watcher == false ]]; then
+    args[1]="${args[1]} !~ \"(F2:WATCHER)\""
+fi
+
+if [[ $putlog == false ]]; then
+    args[1]="${args[1]} !~ \"new=[^ ]+ old=\""
+fi
+
+
+# Format output as requested by user. If invert was set to true, assume normal logcli formattting
+if [[ $table == true ]]; then
+    print_headers
+    if [[ $invert == false ]]; then
+        logcli "${args[@]}" --quiet | compact_logs | format_as_table | tac
+    else
+        logcli "${args[@]}" --quiet | format_as_table
+    fi
+else
+    if [[ $invert == false ]]; then
+       logcli "${args[@]}" | compact_logs | tac
+    else
+        logcli "${args[@]}"
+    fi
+fi
