@@ -43,6 +43,24 @@ process_date() {
     fi
 }
 
+# Format the output as json that includes timestamps
+convert_json() {
+  while IFS= read -r input_json; do
+    if [[ -n "$input_json" ]]; then
+      echo "${input_json}" | jq '                                                                                                                                                                                 
+        {                                                                                                                                                                                                        
+          accelerator: .line | fromjson.accelerator,                                                                                                                                                             
+          origin: .line | fromjson.origin,                                                                                                                                                                       
+          user: .line | fromjson.user,                                                                                                                                                                           
+          facility: .line | fromjson.facility,                                                                                                                                                                   
+          severity: .line | fromjson.severity,                                                                                                                                                                   
+          text: .line | fromjson.text,                                                                                                                                                                           
+          timestamp: (.timestamp | sub("[-+][0-9]{2}:[0-9]{2}$"; ""))
+        }'                                                                                                                                                                                                       
+    fi
+  done
+}
+
 # Add a filter to the query based on user selected fields (e.g., --accelerator)
 add_field() {
     local key=$1
@@ -103,12 +121,16 @@ usage() {
     echo "    Options:"
     echo "    -h | --help: print this usage info and exit"
     echo " "
+    echo "    -q | --quiet: Suppress query metadata"
+    echo " "
+    echo "    -o | --output=default: Specify output mode [default, raw, json, jsonl]. raw suppresses log labels and timestamp. json sends to jq "
+    echo " "
     echo "    -a | --accelerator: Specify accelerator to return results from"
     echo "                        Currently supported: LCLS, FACET"
-    echo "    --origin: Specify the origin/host "
     echo "    -u | --user: Specify the user "
-    echo "    --facility: Specify the facility to return results from"
     echo "    -s | --severity: Specify the severity to return results from"
+    echo "    --origin: Specify the origin/host "
+    echo "    --facility: Specify the facility to return results from"
     echo " "
     echo "    -r | --regex: Return results the match the specified regular expression"
     echo "    -e | --exclude: Return results that do NOT match the specified regular expression"
@@ -149,6 +171,7 @@ watcher=false
 putlog=false
 table=false
 regex=""
+format_json=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -176,7 +199,16 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -t|--tail) invert=true; args+=("$1"); shift ;;
-        -o|--output) invert=true; args+=("$1"); shift ;;
+        -o|--output) 
+            if [[ $2 == "json" ]]; then
+                format_json=true
+                shift 2
+            else
+                invert=true
+                args+=("$1")
+                shift
+            fi
+            ;;
         *) args+=("$1"); shift ;;  # Support logcli options as well
     esac
 done
@@ -208,8 +240,16 @@ if [[ $table == true ]]; then
     fi
 else
     if [[ $invert == false ]]; then
-       logcli "${args[@]}" | compact_logs | tac
+       if [[ $format_json == true ]]; then
+           logcli "${args[@]}" -o jsonl | tac | convert_json
+       else
+           logcli "${args[@]}" | compact_logs | tac
+       fi
     else
-        logcli "${args[@]}"
+       if [[ $format_json == true ]]; then
+           logcli "${args[@]}" -o jsonl | convert_json
+       else
+          logcli "${args[@]}"
+       fi
     fi
 fi
