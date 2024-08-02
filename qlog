@@ -11,7 +11,7 @@ print_headers() {
 }
 
 # Take the output of a logcli command and format it for display as a table. Works for both
-# on-off queries and tailing logs
+# one-off queries and tailing logs
 format_as_table() {
     while read -r line; do
         timestamp=$(echo "$line" | awk -F'T| ' '{print $1 " " $2}' | cut -d- -f1,2,3 --output-delimiter='-')
@@ -47,16 +47,16 @@ process_date() {
 convert_json() {
   while IFS= read -r input_json; do
     if [[ -n "$input_json" ]]; then
-      echo "${input_json}" | jq '                                                                                                                                                                                 
-        {                                                                                                                                                                                                        
-          accelerator: .line | fromjson.accelerator,                                                                                                                                                             
-          origin: .line | fromjson.origin,                                                                                                                                                                       
-          user: .line | fromjson.user,                                                                                                                                                                           
-          facility: .line | fromjson.facility,                                                                                                                                                                   
-          severity: .line | fromjson.severity,                                                                                                                                                                   
-          text: .line | fromjson.text,                                                                                                                                                                           
+      echo "${input_json}" | jq '
+      {
+          accelerator: .line | fromjson.accelerator,
+          origin: .line | fromjson.origin,
+          user: .line | fromjson.user,
+          facility: .line | fromjson.facility,
+          severity: .line | fromjson.severity,
+          text: .line | fromjson.text,
           timestamp: (.timestamp | sub("[-+][0-9]{2}:[0-9]{2}$"; ""))
-        }'                                                                                                                                                                                                       
+      }'
     fi
   done
 }
@@ -71,6 +71,11 @@ add_field() {
 # Condense repeated log lines into a single line, with a short note stating how many lines
 # were compacted
 compact_logs() {
+    if [[ $disable_like == true ]]; then
+        cat
+        return
+    fi
+
     local prev_text=""
     local prev_line=""
     local count=1
@@ -78,15 +83,17 @@ compact_logs() {
     while read -r line; do
         json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
         current_text=$(echo "$json_part" | jq -r '.text' 2>/dev/null)
+        current_origin=$(echo "$json_part" | jq -r '.origin' 2>/dev/null)
+        current_facility=$(echo "$json_part" | jq -r '.facility' 2>/dev/null)
 
-        if [[ "$current_text" == "$prev_text" ]]; then
+        if [[ "$current_text" == "$prev_text" && "$current_origin" == "$prev_origin" && "$current_facility" == "$prev_facility" ]]; then
             ((count++))
         else
             if [[ $count -gt 1 ]]; then
-	        echo ""
+                echo ""
                 echo "$prev_line"
                 echo "$count Like:"
-		echo ""
+                echo ""
                 count=1
             elif [ ! -z "$prev_line" ]; then
                 echo "$prev_line"
@@ -94,6 +101,8 @@ compact_logs() {
         fi
 
         prev_text="$current_text"
+        prev_origin="$current_origin"
+        prev_facility="$current_facility"
         prev_line="$line"
     done
 
@@ -147,6 +156,7 @@ usage() {
     echo "    --changelog: Include results from change logs"
     echo "    --putlog: Include results from put logging"
     echo "    --watcher: Include results from the watcher"
+    echo "    --disable-like: Don't compact multiple repeated log entries into a single \"# Like:\" line"
     echo " "
     echo "    --limit=30 Number of lines of output to return"
     echo "    --table: Print all returned results in a table format"
@@ -169,6 +179,7 @@ invert=false
 changelog=false
 watcher=false
 putlog=false
+disable_like=false
 table=false
 regex=""
 format_json=false
@@ -180,6 +191,7 @@ while [[ $# -gt 0 ]]; do
         --changelog) changelog=true; shift ;;
         --putlog) putlog=true; shift ;;
         --watcher) watcher=true; shift ;;
+        --disable-like) disable_like=true; shift ;;
         --table) table=true; shift ;;
         -a | --accelerator) add_field "accelerator" "$2"; shift 2 ;;
         --origin) add_field "origin" "$2"; shift 2 ;;
