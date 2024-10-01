@@ -15,12 +15,15 @@ print_headers() {
 format_as_table() {
     while read -r line; do
         timestamp=$(echo "$line" | awk -F'T| ' '{print $1 " " $2}' | cut -d- -f1,2,3 --output-delimiter='-')
+
+        # Extract the JSON from the line
         if [[ "$line" =~ "accelerator_logs" ]]; then
             json_part=$(echo "$line" | awk -F'{job="accelerator_logs"} ' '{print $2}' | tr -d '\000-\037')
         else
             json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
         fi
-        read -r accelerator origin facility text <<< $(echo "$json_part" | jq -r '.accelerator, .origin, .facility, .text')
+
+        read -r accelerator origin facility text <<< $(echo "$json_part" | jq -r '[.accelerator, .origin, .facility, .text] | @tsv')
         printf "%-20s %-15s %-15s %-20s %-40s\n" "$timestamp" "$accelerator" "$origin" "$facility" "$text"
     done
 }
