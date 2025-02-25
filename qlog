@@ -32,18 +32,34 @@ format_as_table() {
 # them into the format that logcli expects
 process_date() {
     local input_date=$1
-    if [[ "$input_date" =~ -[0-9]+[dh]$ ]]; then
-        local value="${input_date%?}"
-        case "$input_date" in
-            *d)
-                echo $(date "+%Y-%m-%dT%H:%M:%S.%NZ" -d "$value day") ;;
-            *h)
-                echo $(date "+%Y-%m-%dT%H:%M:%S.%NZ" -d "$value hour") ;;
-        esac
+    local timezone_offset=$(date +%:z)
+
+    if [[ "$input_date" =~ -[0-9]+[smhdwMy]$ ]]; then
+        local date_in_hours=$(convert_to_hours "$input_date")
+        local value="${date_in_hours%?}"
+        date -d "$value hours" "+%Y-%m-%dT%H:%M:%S.%N$timezone_offset"
     else
         # Use the provided date directly if it doesn't match the above pattern.
         echo "$input_date"
     fi
+}
+
+# Converts the input time value to the number of hours in it
+convert_to_hours() {
+    local input=$1
+    local value="${input%[smhdwMy]}" # Extract the numeric part
+    local unit="${input: -1}"
+
+    case "$unit" in
+        s) echo "$((value / 3600))h" ;;
+        m) echo "$((value / 60))h" ;;
+        h) echo "${value}h" ;;
+        d) echo "$((value * 24))h" ;;
+        w) echo "$((value * 24 * 7))h" ;;
+        M) echo "$((value * 24 * 30))h" ;;
+        y) echo "$((value * 24 * 365))h" ;;
+        *) echo "Invalid unit: $unit"; return 1 ;;
+    esac
 }
 
 # Format the output as json that includes timestamps
@@ -147,14 +163,15 @@ usage() {
     echo "    -r | --regex: Return results the match the specified regular expression"
     echo "    -e | --exclude: Return results that do NOT match the specified regular expression"
     echo " "
-    echo "    --since=1h: Lookback period"
+    echo "    --since=1h: Lookback period. Valid units: s, m, h, d, w, M, y"
     echo "    --from: The earliest date from which to return from"
-    echo "            Uses RFC3339Nano without timezone, or number of days or hours ago"
+    echo "            Uses RFC3339Nano or relative time ago from now (s, m, h, d, w, M, y)"
     echo "            --from -10d --to -9d  # between 10 and 9 days ago"
     echo "            --from -36h --to -24h # between 36 and 24 hours ago"
-    echo "            --from 2023-09-20T10:00:00Z --to 2023-09-21T10:00:00Z"
+    echo "            --from -10h # omitting --to implies now, so from 10 hours ago to now"
+    echo "            --from 2023-09-20T10:00:00-08:00 --to 2023-09-21T10:00:00-08:00"
     echo "    --to: The latest date from which to return results"
-    echo "          Uses RFC3339Nano without timezone, or number of days or hours ago"
+    echo "          Uses RFC3339Nano or relative time ago from now, same as --from"
     echo " "
     echo "    --changelog: Include results from change logs"
     echo "    --putlog: Include results from put logging"
@@ -203,6 +220,11 @@ while [[ $# -gt 0 ]]; do
         -s | --severity) add_field "severity" "$2"; shift 2 ;;
         -r | --regex) args[1]="${args[1]} |~ \"$2\""; shift 2 ;;
         -e | --exclude) args[1]="${args[1]} !~ \"$2\""; shift 2 ;;
+        --since)
+            since_in_hours=$(convert_to_hours "$2")
+            args+=("--since=$since_in_hours")
+            shift 2
+            ;;
         --from)
             processed_from=$(process_date "$2")
             args+=("--from=$processed_from")
@@ -214,7 +236,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -t|--tail) invert=true; args+=("$1"); shift ;;
-        -o|--output) 
+        -o|--output)
             if [[ $2 == "json" ]]; then
                 format_json=true
                 shift 2
