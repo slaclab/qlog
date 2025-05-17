@@ -260,7 +260,9 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --to)
-            processed_to=$(process_date "$2")
+            numeric_value="$2"
+            [[ "$numeric_value" != -* ]] && numeric_value="-$numeric_value"
+            processed_to=$(process_date "$numeric_value")
             args+=("--to=$processed_to")
             shift 2
             ;;
