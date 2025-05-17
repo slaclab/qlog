@@ -87,6 +87,31 @@ add_field() {
     requested_fields[$key]=$value
 }
 
+# Print a warning to the user if the number of results returned is likely higher than the limit that they set
+warn_if_limit_hit() {
+    if [[ $tail_mode == true ]]; then
+        cat
+        return
+    fi
+
+    local count=0
+
+    while IFS= read -r line; do
+        echo "$line"
+        if [[ "$line" == *'"accelerator":'* ]]; then
+            ((count++))
+        fi
+    done
+
+    if [[ "$count" -ge "$limit" ]]; then
+        print_limit_warning
+    fi
+}
+
+print_limit_warning() {
+    printf "\n\nWARNING: More than %s entries match. Printing chronologically final %s. Use --limit to increase this number.\n\n" "$limit" "$limit" >&2
+}
+
 # Condense repeated log lines into a single line, with a short note stating how many lines
 # were compacted
 compact_logs() {
@@ -203,6 +228,8 @@ disable_like=false
 table=false
 regex=""
 format_json=false
+tail_mode=false
+limit=100
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -226,7 +253,9 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --from)
-            processed_from=$(process_date "$2")
+            numeric_value="$2"
+            [[ "$numeric_value" != -* ]] && numeric_value="-$numeric_value"
+            processed_from=$(process_date "$numeric_value")
             args+=("--from=$processed_from")
             shift 2
             ;;
@@ -235,7 +264,17 @@ while [[ $# -gt 0 ]]; do
             args+=("--to=$processed_to")
             shift 2
             ;;
-        -t|--tail) invert=true; args+=("$1"); shift ;;
+        --limit)
+            limit="$2"
+            args+=("--limit=$limit")
+            shift 2
+            ;;
+        -t|--tail)
+            invert=true
+            tail_mode=true
+            args+=("$1")
+            shift
+            ;;
         -o|--output)
             if [[ $2 == "json" ]]; then
                 format_json=true
@@ -249,6 +288,11 @@ while [[ $# -gt 0 ]]; do
         *) args+=("$1"); shift ;;  # Support logcli options as well
     esac
 done
+
+# Set default limit to 100 if user didn't specify one
+if ! printf '%s\n' "${args[@]}" | grep -q -- '--limit='; then
+    args+=("--limit=$limit")
+fi
 
 build_query
 
@@ -267,24 +311,24 @@ if [[ $putlog == false ]]; then
 fi
 
 
-# Format output as requested by user. If invert was set to true, assume normal logcli formattting
+# Format output as requested by user. If invert was set to true, assume normal logcli formatting
 if [[ $table == true ]]; then
     print_headers
     if [[ $invert == false ]]; then
-        logcli "${args[@]}" --quiet | compact_logs | format_as_table | tac
+        logcli "${args[@]}" --quiet | warn_if_limit_hit | compact_logs | format_as_table | tac
     else
-        logcli "${args[@]}" --quiet | format_as_table
+        logcli "${args[@]}" --quiet | warn_if_limit_hit | format_as_table
     fi
 else
     if [[ $invert == false ]]; then
        if [[ $format_json == true ]]; then
-           logcli "${args[@]}" -o jsonl | tac | convert_json
+           logcli "${args[@]}" -o jsonl | warn_if_limit_hit | tac | convert_json
        else
-           logcli "${args[@]}" | compact_logs | tac
+           logcli "${args[@]}" | warn_if_limit_hit | compact_logs | tac
        fi
     else
        if [[ $format_json == true ]]; then
-           logcli "${args[@]}" -o jsonl | convert_json
+           logcli "${args[@]}" -o jsonl | warn_if_limit_hit | convert_json
        else
           logcli "${args[@]}"
        fi
