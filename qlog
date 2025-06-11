@@ -6,7 +6,7 @@ args=('query' '{job="accelerator_logs"}')
 
 # Print the column headers for results in table format
 print_headers() {
-    printf "%-20s %-15s %-15s %-20s %-40s\n" "Timestamp" "Accelerator" "Origin" "Facility" "Text"
+    printf "%-20s %-15s %-20s %-20s %-20s %-40s\n" "Timestamp" "Accelerator" "Origin" "Facility" "Proc" "Text"
     echo "==========================================================================================================="
 }
 
@@ -23,8 +23,8 @@ format_as_table() {
             json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
         fi
 
-        read -r accelerator origin facility text <<< $(echo "$json_part" | jq -r '[.accelerator, .origin, .facility, .text] | @tsv')
-        printf "%-20s %-15s %-15s %-20s %-40s\n" "$timestamp" "$accelerator" "$origin" "$facility" "$text"
+        read -r accelerator origin facility proc text <<< $(echo "$json_part" | jq -r '[.accelerator, .origin, .facility, .proc, .text] | @tsv')
+        printf "%-20s %-15s %-20s %-20s %-20s %-40s\n" "$timestamp" "$accelerator" "$origin" "$facility" "$proc" "$text"
     done
 }
 
