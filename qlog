@@ -1,5 +1,11 @@
 #!/bin/bash
 
+cleanup() {
+    echo "Exiting…" >&2
+    exit 0
+}
+trap 'cleanup' SIGINT SIGTERM SIGQUIT SIGHUP
+
 declare -A requested_fields
 args=('query' '{job="accelerator_logs"}')
 
@@ -23,7 +29,13 @@ format_as_table() {
             json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
         fi
 
-        read -r accelerator origin facility proc text <<< $(echo "$json_part" | jq -r '[.accelerator, .origin, .facility, .proc, .text] | @tsv')
+        tsv=$(echo "$json_part" | jq -r '[.accelerator, .origin, .facility, .proc, .text] | @tsv')
+        accelerator=$(cut -f1  <<<"$tsv")
+        origin=$(cut -f2  <<<"$tsv")
+        facility=$(cut -f3  <<<"$tsv")
+        proc=$(cut -f4  <<<"$tsv")
+        text=$(cut -f5- <<<"$tsv")
+
         printf "%-20s %-15s %-20s %-20s %-20s %-40s\n" "$timestamp" "$accelerator" "$origin" "$facility" "$proc" "$text"
     done
 }
@@ -312,6 +324,46 @@ if [[ $putlog == false ]]; then
     args[1]="${args[1]} !~ \"new=[^ ]+ old=\""
 fi
 
+
+# If tail mode is active and user hasn't specified a --since, add --since=0s
+# logcli default behavior is to retrieve the last couple minutes of data which doesn't seem
+# very useful, especially when we are handling immediate reconnects here
+if [[ $tail_mode == true ]]; then
+    if ! printf '%s\n' "${args[@]}" | grep -q -- '--since='; then
+        args+=("--since=0s")
+    fi
+fi
+
+# The while loop here handles reconnecting. Loki will only allow tailing logs for a max duration
+# of 1 hour, before printing this and forcing a quit:
+# Error reading stream: websocket: close 1011 (internal server error): reached tail max duration limit
+# Get around it here by just reconnecting until the user (or system) exits the script
+# See also: https://github.com/grafana/loki/issues/5086
+if [[ $tail_mode == true ]]; then
+    # Print headers once if in table mode
+    if [[ $table == true ]]; then
+        print_headers
+    fi
+
+    while true; do
+        if [[ $table == true ]]; then
+            logcli "${args[@]}" --quiet \
+              | format_as_table
+        else
+            if [[ $format_json == true ]]; then
+                logcli "${args[@]}" -o jsonl \
+                  | convert_json
+            else
+                logcli "${args[@]}"
+            fi
+        fi
+        printf "\nReconnecting...\n" >&2
+        sleep 1
+	printf "\nReconnect successful\n" >&2
+    done
+
+    exit 0
+fi
 
 # Format output as requested by user. If invert was set to true, assume normal logcli formatting
 if [[ $table == true ]]; then
