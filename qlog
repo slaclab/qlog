@@ -212,7 +212,7 @@ usage() {
     echo "qlog is a wrapper script around Loki's logcli to facilitate message log queries at SLAC."
     echo " "
     echo "Usage: `basename $0` [OPTIONS]"
-    echo "    Default: Returns the most recent 30 log entries excluding change log, watcher, and put logs"
+    echo "    Default: Returns the most recent 100 log entries excluding change log, watcher, and put logs"
     echo " "
     echo "    Options:"
     echo "    -h | --help: print this usage info and exit"
@@ -228,6 +228,7 @@ usage() {
     echo "    -s | --severity: Specify the severity to return results from"
     echo "    --origin: Specify the origin/host "
     echo "    --facility: Specify the facility to return results from"
+    echo "    --proc: Specify the proc to return results from"
     echo " "
     echo "    -r | --regex: Return results the match the specified regular expression"
     echo "    -e | --exclude: Return results that do NOT match the specified regular expression"
@@ -237,7 +238,7 @@ usage() {
     echo "            Uses RFC3339Nano or relative time ago from now (s, m, h, d, w, M, y)"
     echo "            --from -10d --to -9d  # between 10 and 9 days ago"
     echo "            --from -36h --to -24h # between 36 and 24 hours ago"
-    echo "            --from -10h # omitting --to implies now, so from 10 hours ago to now"
+    echo "            --from -10h  # omitting --to implies now, so from 10 hours ago to now"
     echo "            --from 2023-09-20T10:00:00-08:00 --to 2023-09-21T10:00:00-08:00"
     echo "    --to: The latest date from which to return results"
     echo "          Uses RFC3339Nano or relative time ago from now, same as --from"
@@ -249,6 +250,7 @@ usage() {
     echo " "
     echo "    --limit=100 Number of lines of output to return"
     echo "    --table: Print all returned results in a table format"
+    echo ""
     echo "    -t | --tail: Tail results to watch logs in real time"
     echo ""
     echo "Example Queries:"
@@ -290,6 +292,7 @@ while [[ $# -gt 0 ]]; do
         --origin) add_field "origin" "$2"; shift 2 ;;
         -u | --user) add_field "user" "$2"; shift 2 ;;
         --facility) add_field "facility" "$2"; shift 2 ;;
+        --proc) add_field "proc" "$2"; shift 2 ;;
         -s | --severity) add_field "severity" "$2"; shift 2 ;;
         -r | --regex) args[1]="${args[1]} |~ \"$2\""; shift 2 ;;
         -e | --exclude) args[1]="${args[1]} !~ \"$2\""; shift 2 ;;
@@ -364,7 +367,7 @@ fi
 # very useful, especially when we are handling immediate reconnects here
 if [[ $tail_mode == true ]]; then
     if ! printf '%s\n' "${args[@]}" | grep -q -- '--since='; then
-        args+=("--since=0s")
+        args+=("--since=2s")
     fi
 fi
 
@@ -391,9 +394,7 @@ if [[ $tail_mode == true ]]; then
                 logcli "${args[@]}"
             fi
         fi
-        printf "\nReconnecting...\n" >&2
         sleep 1
-	printf "\nReconnect successful\n" >&2
     done
 
     exit 0
