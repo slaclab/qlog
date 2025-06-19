@@ -384,14 +384,14 @@ if [[ $tail_mode == true ]]; then
 
     while true; do
         if [[ $table == true ]]; then
-            logcli "${args[@]}" --quiet \
+            logcli "${args[@]}" --quiet 2> >(grep -v "reached tail max duration limit" >&2) \
               | format_as_table
         else
             if [[ $format_json == true ]]; then
-                logcli "${args[@]}" -o jsonl \
+                logcli "${args[@]}" -o jsonl 2> >(grep -v "reached tail max duration limit" >&2) \
                   | convert_json
             else
-                logcli "${args[@]}"
+                logcli "${args[@]}" 2> >(grep -v "reached tail max duration limit" >&2)
             fi
         fi
         sleep 1
