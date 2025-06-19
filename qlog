@@ -206,6 +206,12 @@ build_query() {
             args[1]="${args[1]} |= \"\\\"$key\\\": \\\"$value\\\"\""
         fi
     done
+    if [[ -n "$regex_filter" ]]; then
+	args[1]="${args[1]} |~ \"$regex_filter\""
+    fi
+    if [[ -n "$exclude_filter" ]]; then
+	args[1]="${args[1]} !~ \"$exclude_filter\""
+    fi
 }
 
 usage() {
@@ -274,7 +280,8 @@ watcher=false
 putlog=false
 disable_like=false
 table=false
-regex=""
+regex_filter=""
+exclude_filter=""
 format_json=false
 tail_mode=false
 limit=100
@@ -294,8 +301,14 @@ while [[ $# -gt 0 ]]; do
         --facility) add_field "facility" "$2"; shift 2 ;;
         --proc) add_field "proc" "$2"; shift 2 ;;
         -s | --severity) add_field "severity" "$2"; shift 2 ;;
-        -r | --regex) args[1]="${args[1]} |~ \"$2\""; shift 2 ;;
-        -e | --exclude) args[1]="${args[1]} !~ \"$2\""; shift 2 ;;
+        -r | --regex)
+	    regex_filter="$2"
+	    shift 2
+	    ;;
+        -e | --exclude)
+	    exclude_filter="$2"
+	    shift 2
+	    ;;
         --since)
             since_in_hours=$(convert_to_hours "$2")
             args+=("--since=$since_in_hours")
