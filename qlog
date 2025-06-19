@@ -25,6 +25,8 @@ format_as_table() {
         # Extract the JSON from the line
         if [[ "$line" =~ "accelerator_logs" ]]; then
             json_part=$(echo "$line" | awk -F'{job="accelerator_logs"} ' '{print $2}' | tr -d '\000-\037')
+        elif [[ "$line" =~ "accelerator_dev_logs" ]]; then
+            json_part=$(echo "$line" | awk -F'{job="accelerator_dev_logs"} ' '{print $2}' | tr -d '\000-\037')
         else
             json_part=$(echo "$line" | awk -F'{} ' '{print $2}' | tr -d '\000-\037')
         fi
@@ -93,10 +95,18 @@ convert_json() {
 }
 
 # Add a filter to the query based on user selected fields (e.g., --accelerator)
+accelerators=()
 add_field() {
     local key=$1
     local value=$2
-    requested_fields[$key]=$value
+    if [[ "$key" == "accelerator" ]]; then
+        accelerators+=("$value")
+    fi
+    if [[ -n "${requested_fields[$key]}" ]]; then
+        requested_fields[$key]+="|$value"
+    else
+        requested_fields[$key]="$value"
+    fi
 }
 
 # Print a warning to the user if the number of results returned is likely higher than the limit that they set
@@ -172,8 +182,29 @@ compact_logs() {
 
 # Apply filters specified by the user in their command before making the logcli call
 build_query() {
+    # If dev logs were requested, that is a different Loki job label than the production ones,
+    # so account for that here
+    local job_filter=""
+
+    if [[ ${#accelerators[@]} -eq 1 && "${accelerators[0]}" == "LCLS-DEV" ]]; then
+        job_filter='accelerator_dev_logs'
+    elif [[ " ${accelerators[*]} " =~ " LCLS-DEV " ]]; then
+        job_filter='accelerator_logs|accelerator_dev_logs'
+    else
+        job_filter='accelerator_logs'
+    fi
+
+    # Set the updated job label in the query
+    args[1]="{job=~\"$job_filter\"}"
+
     for key in "${!requested_fields[@]}"; do
-        args[1]="${args[1]} |= \"\\\"$key\\\": \\\"${requested_fields[$key]}\\\"\""
+        value="${requested_fields[$key]}"
+        # Multiple values need to not use an exact match, so use '|~'
+        if [[ "$value" == *"|"* ]]; then
+            args[1]="${args[1]} |~ \"\\\"$key\\\": \\\"(${value})\\\"\""
+        else
+            args[1]="${args[1]} |= \"\\\"$key\\\": \\\"$value\\\"\""
+        fi
     done
 }
 
@@ -191,7 +222,8 @@ usage() {
     echo "    -o | --output=default: Specify output mode [default, raw, json, jsonl]. raw suppresses log labels and timestamp. json sends to jq "
     echo " "
     echo "    -a | --accelerator: Specify accelerator to return results from"
-    echo "                        Currently supported: LCLS, FACET"
+    echo "                        Currently supported: LCLS, FACET, TESTFAC, LCLS-DEV"
+    echo "                        If not set, defaults to use LCLS and FACET and TESTFAC"
     echo "    -u | --user: Specify the user "
     echo "    -s | --severity: Specify the severity to return results from"
     echo "    --origin: Specify the origin/host "
@@ -215,18 +247,20 @@ usage() {
     echo "    --watcher: Include results from the watcher"
     echo "    --disable-like: Don't compact multiple repeated log entries into a single \"# Like:\" line"
     echo " "
-    echo "    --limit=30 Number of lines of output to return"
+    echo "    --limit=100 Number of lines of output to return"
     echo "    --table: Print all returned results in a table format"
     echo "    -t | --tail: Tail results to watch logs in real time"
-    echo " "
+    echo ""
     echo "Example Queries:"
     echo " "
     echo "    Get last 20 lines from FACET over the past 24 hours that include the string KLYS output as a table:"
     echo "        qlog -a FACET -r KLYS --since 24h --limit 20 --table"
-    echo " "
-    echo "    Get 30 lines from any accelerator that include the word error and exclude the string buffer from yesterday:"
+    echo ""
+    echo "    Get up to 100 (default amount) lines from any accelerator that include the word error (case insensitive) and exclude the word buffer (case sensitive) from yesterday:"
     echo "        qlog -r \"(?i)error\" -e buffer --from -2d --to -1d --table"
-
+    echo ""
+    echo "    Tail the logs from either LCLS or LCLS-DEV receiving only those from the CRYO or rf facilities"
+    echo "        qlog -a LCLS -a LCLS-DEV --facility CRYO --facility rf --tail"
 
     exit 0
 }
