@@ -186,9 +186,9 @@ build_query() {
     # so account for that here
     local job_filter=""
 
-    if [[ ${#accelerators[@]} -eq 1 && "${accelerators[0]}" == "LCLS-DEV" ]]; then
+    if [[ ${#accelerators[@]} -eq 1 && "${accelerators[0]}" == "DEV" ]]; then
         job_filter='accelerator_dev_logs'
-    elif [[ " ${accelerators[*]} " =~ " LCLS-DEV " ]]; then
+    elif [[ " ${accelerators[*]} " =~ " DEV " ]]; then
         job_filter='accelerator_logs|accelerator_dev_logs'
     else
         job_filter='accelerator_logs'
@@ -228,7 +228,7 @@ usage() {
     echo "    -o | --output=default: Specify output mode [default, raw, json, jsonl]. raw suppresses log labels and timestamp. json sends to jq "
     echo " "
     echo "    -a | --accelerator: Specify accelerator to return results from"
-    echo "                        Currently supported: LCLS, FACET, TESTFAC, LCLS-DEV"
+    echo "                        Currently supported: LCLS, FACET, TESTFAC, DEV"
     echo "                        If not set, defaults to use LCLS and FACET and TESTFAC"
     echo "    -u | --user: Specify the user "
     echo "    -s | --severity: Specify the severity to return results from"
@@ -267,8 +267,8 @@ usage() {
     echo "    Get up to 100 (default amount) lines from any accelerator that include the word error (case insensitive) and exclude the word buffer (case sensitive) from yesterday:"
     echo "        qlog -r \"(?i)error\" -e buffer --from -2d --to -1d --table"
     echo ""
-    echo "    Tail the logs from either LCLS or LCLS-DEV receiving only those from the CRYO or rf facilities"
-    echo "        qlog -a LCLS -a LCLS-DEV --facility CRYO --facility rf --tail"
+    echo "    Tail the logs from either LCLS or DEV receiving only those from the CRYO or rf facilities"
+    echo "        qlog -a LCLS -a DEV --facility CRYO --facility rf --tail"
 
     exit 0
 }
